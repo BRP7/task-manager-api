@@ -22,3 +22,11 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User',userSchema); 
 export default User;
+
+
+// password: {
+//     type: String,
+//     select: false
+// }
+// Password is NEVER returned unless you explicitly ask for it
+// User.findOne({ email }).select("+password")
