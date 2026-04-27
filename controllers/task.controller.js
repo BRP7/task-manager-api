@@ -135,3 +135,19 @@ export const updateTaskStatus = async (req, res) => {
         return res.status(500).json({ message: error.message });
     }
 };
+
+export const getTasks = async ( req, res ) => {
+    try {
+        const userId = req.user.userId;
+        const today = new Date().toISOString().split("T")[0];
+        const tasks = await Task.find({ user : userId , date : today }).sort({ createdAt: 1 });
+        const primary = tasks.find( t  => t.type === "primary") || null;
+        const secondary = tasks.filter( t  => t.type === "secondary");
+        return res.status(200).json({
+            primary,
+            secondary
+        })
+    } catch (error) {
+        return res.status(500).json({message : error.message});
+    }
+}
