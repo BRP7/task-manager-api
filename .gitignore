@@ -30,3 +30,4 @@ coverage/
 # misc
 *.tmp
 *.temp
+*.md
