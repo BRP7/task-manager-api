@@ -184,7 +184,7 @@ export const getTasks = async (req, res) => {
     }
 };
 
-export const renamePrimaryTask = async (req, res) => {
+export const renameTask = async (req, res) => {
     try {
         const { id } = req.params;
         const { rename } = req.body;
@@ -202,7 +202,7 @@ export const renamePrimaryTask = async (req, res) => {
             });
         }
 
-        // get task safely
+        // get task
         const task = await Task.findOne({
             _id: id,
             user: userId
@@ -214,17 +214,10 @@ export const renamePrimaryTask = async (req, res) => {
             });
         }
 
-        // ensure it's primary
-        if (task.type !== "primary") {
+        // rule: cannot rename after its done
+        if (task.status === "done") {
             return res.status(400).json({
-                message: "Only primary task can be renamed"
-            });
-        }
-
-        // rule: only before start
-        if (task.status !== "todo") {
-            return res.status(400).json({
-                message: "Cannot rename after task has started"
+                message: "Cannot rename completed task"
             });
         }
 
@@ -239,3 +232,145 @@ export const renamePrimaryTask = async (req, res) => {
     }
 };
 
+export const carryForwardedTask = async (req, res) => {
+    try {
+        const { ids } = req.body;
+        const userId = req.user.userId;
+
+        const query = {
+            user: userId,
+            date: getToday(),
+            status: { $ne: "done" }
+        };
+
+        if (ids && ids.length) {
+            query._id = { $in: ids };
+        }
+
+        const tasks = await Task.find(query);
+
+        if (!tasks.length) {
+            return res.status(404).json({
+                message: "No task to carry forward"
+            });
+        }
+
+        const base = new Date();
+        base.setDate(base.getDate() + 1);
+
+        const tomorrow = new Date(
+            base.getFullYear(),
+            base.getMonth(),
+            base.getDate()
+        ).toISOString().split("T")[0];
+
+        const tomorrowsTasks = await Task.find({
+            user: userId,
+            date: tomorrow
+        });
+
+        const primaryTomorrow = tomorrowsTasks.find(t => t.type === "primary") || null;
+        const secondaryTomorrow = tomorrowsTasks.filter(t => t.type === "secondary");
+
+        const primaryToday = tasks.find(t => t.type === "primary") || null;
+
+        if (!primaryTomorrow && !primaryToday) {
+            return res.status(400).json({
+                message: "No primary task available for tomorrow",
+                action: "select_primary"
+            });
+        }
+
+        const secondaryLimit = primaryTomorrow && primaryTomorrow.status === "done" ? 5 : 2;
+
+        let newTasks = [];
+
+        for (let t of tasks) {
+
+            // PRIMARY
+            if (t.type === "primary") {
+                if (primaryTomorrow || newTasks.some(nt => nt.type === "primary")) {
+                    continue;
+                }
+            }
+
+            // SECONDARY
+            if (t.type === "secondary") {
+                const totalSecondary =
+                    secondaryTomorrow.length +
+                    newTasks.filter(nt => nt.type === "secondary").length;
+
+                if (totalSecondary >= secondaryLimit) {
+                    continue;
+                }
+            }
+
+            newTasks.push({
+                title: t.title,
+                status: "todo",
+                type: t.type,
+                date: tomorrow,
+                user: userId,
+                estimatedTime: t.estimatedTime
+            });
+        }
+
+        const createdTasks = await Task.insertMany(newTasks);
+
+        return res.status(201).json({
+            message: "Tasks carried forward successfully",
+            count: createdTasks.length,
+            tasks: createdTasks
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message
+        });
+    }
+};
+
+export const deleteTask = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = req.user.userId;
+
+        // validate id
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({
+                message: "Invalid ID"
+            });
+        }
+
+        // find task
+        const task = await Task.findOne({
+            _id: id,
+            user: userId
+        });
+
+        if (!task) {
+            return res.status(404).json({
+                message: "Task not found"
+            });
+        }
+
+        // block primary deletion
+        if (task.type === "primary") {
+            return res.status(400).json({
+                message: "Primary task cannot be deleted"
+            });
+        }
+
+        // delete secondary
+        await Task.deleteOne({ _id: id });
+
+        return res.status(200).json({
+            message: "Task deleted successfully"
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message
+        });
+    }
+};
