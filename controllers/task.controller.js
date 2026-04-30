@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import Task from "../models/task.model.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { apiError } from "../utils/apiError.js"
 
 // safer date (no timezone bugs)
 const getToday = () => {
@@ -12,8 +14,7 @@ const getToday = () => {
 };
 
 
-export const createTask = async (req, res) => {
-    try {
+export const createTask = asyncHandler (async (req, res) => {
         const { title, type, estimatedTime } = req.body;
         const userId = req.user.userId;
 
@@ -21,13 +22,11 @@ export const createTask = async (req, res) => {
 
         // validation
         if (!title || !type || isNaN(time) || time <= 0) {
-            return res.status(400).json({
-                message: "Title, type and estimatedTime are required"
-            });
+            throw apiError("Title, type and estimatedTime are required",400);
         }
 
         if (!["primary", "secondary"].includes(type)) {
-            return res.status(400).json({ message: "Invalid task type" });
+            throw apiError("Invalid task type",400);
         }
 
         const today = getToday();
@@ -40,9 +39,7 @@ export const createTask = async (req, res) => {
         // PRIMARY RULE
         if (type === "primary") {
             if (primaryTask) {
-                return res.status(409).json({
-                    message: "Primary task already exists"
-                });
+                throw apiError("Primary task already exists", 409);
             }
         }
 
@@ -50,22 +47,16 @@ export const createTask = async (req, res) => {
         if (type === "secondary") {
 
             if (!primaryTask) {
-                return res.status(400).json({
-                    message: "Create primary task first"
-                });
+                throw apiError("Create primary task first", 400);
             }
 
             if (primaryTask.status !== "done") {
                 if (secondaryTasks.length >= 2) {
-                    return res.status(400).json({
-                        message: "Max 2 secondary tasks before primary is done"
-                    });
+                    throw apiError("Max 2 secondary tasks before primary is done", 400);
                 }
             } else {
                 if (secondaryTasks.length >= 5) {
-                    return res.status(400).json({
-                        message: "Max 5 secondary tasks after primary is done"
-                    });
+                    throw apiError("Max 5 secondary tasks after primary is done", 400);
                 }
             }
         }
@@ -79,14 +70,9 @@ export const createTask = async (req, res) => {
         });
 
         return res.status(201).json(task);
+});
 
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
-
-export const updateTaskStatus = async (req, res) => {
-    try {
+export const updateTaskStatus = asyncHandler (async (req, res) => {
         const { status } = req.body;
         const { id } = req.params;
         const userId = req.user.userId;
@@ -94,19 +80,17 @@ export const updateTaskStatus = async (req, res) => {
         const allowedStatus = ["todo", "in-progress", "done"];
 
         if (!status || !allowedStatus.includes(status)) {
-            return res.status(400).json({ message: "Invalid status" });
+            throw apiError("Invalid status", 400);
         }
 
         const task = await Task.findOne({ _id: id, user: userId });
 
         if (!task) {
-            return res.status(404).json({ message: "Task not found" });
+            throw apiError("Task not found", 404);
         }
 
         if (task.status === status) {
-            return res.status(409).json({
-                message: "Task already has this status"
-            });
+            throw apiError("Task already has this status", 409);
         }
 
         if (status === "in-progress") {
@@ -120,9 +104,7 @@ export const updateTaskStatus = async (req, res) => {
                 });
 
                 if (!primary || primary.status !== "done") {
-                    return res.status(400).json({
-                        message: "Finish primary task first"
-                    });
+                    throw apiError("Finish primary task first", 400);
                 }
             }
 
@@ -134,9 +116,7 @@ export const updateTaskStatus = async (req, res) => {
             });
 
             if (activeTask && !activeTask._id.equals(task._id)) {
-                return res.status(400).json({
-                    message: "Another task is already in progress"
-                });
+                throw apiError("Another task is already in progress", 400);
             }
 
             task.startedAt = new Date();
@@ -158,13 +138,11 @@ export const updateTaskStatus = async (req, res) => {
 
         return res.status(200).json(task);
 
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
 
-export const getTasks = async (req, res) => {
-    try {
+});
+
+export const getTasks = asyncHandler (async (req, res) => {
+
         const userId = req.user.userId;
         const today = getToday();
 
@@ -179,27 +157,23 @@ export const getTasks = async (req, res) => {
             secondary
         });
 
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
 
-export const renameTask = async (req, res) => {
-    try {
+});
+
+export const renameTask = asyncHandler (async (req, res) => {
+
         const { id } = req.params;
         const { rename } = req.body;
         const userId = req.user.userId;
 
         // validate id
         if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid ID" });
+            throw apiError("Invalid ID", 400);
         }
 
         // validate input
         if (!rename || !rename.trim()) {
-            return res.status(400).json({
-                message: "Valid title required"
-            });
+            throw apiError("Valid title required", 400);
         }
 
         // get task
@@ -209,16 +183,12 @@ export const renameTask = async (req, res) => {
         });
 
         if (!task) {
-            return res.status(404).json({
-                message: "Task not found"
-            });
+            throw apiError("Task not found", 404);
         }
 
         // rule: cannot rename after its done
         if (task.status === "done") {
-            return res.status(400).json({
-                message: "Cannot rename completed task"
-            });
+            throw apiError("Cannot rename completed task", 400);
         }
 
         // update
@@ -227,13 +197,11 @@ export const renameTask = async (req, res) => {
 
         return res.status(200).json(task);
 
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
 
-export const carryForwardedTask = async (req, res) => {
-    try {
+});
+
+export const carryForwardedTask = asyncHandler (async (req, res) => {
+
         const { ids } = req.body;
         const userId = req.user.userId;
 
@@ -250,9 +218,7 @@ export const carryForwardedTask = async (req, res) => {
         const tasks = await Task.find(query);
 
         if (!tasks.length) {
-            return res.status(404).json({
-                message: "No task to carry forward"
-            });
+            throw apiError("No task to carry forward", 404);
         }
 
         const base = new Date();
@@ -275,10 +241,7 @@ export const carryForwardedTask = async (req, res) => {
         const primaryToday = tasks.find(t => t.type === "primary") || null;
 
         if (!primaryTomorrow && !primaryToday) {
-            return res.status(400).json({
-                message: "No primary task available for tomorrow",
-                action: "select_primary"
-            });
+            throw apiError("No primary task available for tomorrow", 400);
         }
 
         const secondaryLimit = primaryTomorrow && primaryTomorrow.status === "done" ? 5 : 2;
@@ -322,55 +285,30 @@ export const carryForwardedTask = async (req, res) => {
             count: createdTasks.length,
             tasks: createdTasks
         });
+});
 
-    } catch (error) {
-        return res.status(500).json({
-            message: error.message
-        });
-    }
-};
+export const deleteTask = asyncHandler (async (req, res) => {
 
-export const deleteTask = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userId = req.user.userId;
+     const { id } = req.params;
+     const userId = req.user.userId;
+ 
+     // validate id
+     if (!mongoose.Types.ObjectId.isValid(id)) {
+         throw apiError("Invalid ID", 400);
+     }
+ 
+     const deleted = await Task.deleteOne({
+         _id: id,
+         user: userId,
+         type: "secondary"
+     });
+ 
+     if (deleted.deletedCount === 0) {
+         throw apiError("Task not found or not allowed", 404);
+     }
 
-        // validate id
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                message: "Invalid ID"
-            });
-        }
-
-        // find task
-        const task = await Task.findOne({
-            _id: id,
-            user: userId
-        });
-
-        if (!task) {
-            return res.status(404).json({
-                message: "Task not found"
-            });
-        }
-
-        // block primary deletion
-        if (task.type === "primary") {
-            return res.status(400).json({
-                message: "Primary task cannot be deleted"
-            });
-        }
-
-        // delete secondary
-        await Task.deleteOne({ _id: id });
-
-        return res.status(200).json({
+     return res.status(200).json({
             message: "Task deleted successfully"
         });
-
-    } catch (error) {
-        return res.status(500).json({
-            message: error.message
-        });
-    }
-};
+   
+})
