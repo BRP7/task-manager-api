@@ -31,3 +31,8 @@ coverage/
 *.tmp
 *.temp
 *.md
+
+
+# frontend
+client/node_modules/
+client/dist/
