@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import api, { getErrorMessage } from "../api/client";
+import { registerUser } from "../api/auth";
+import { getErrorMessage } from "../api/client";
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -23,7 +24,7 @@ export default function RegisterPage() {
     setNotice(null);
 
     try {
-      await api.post("/users/register", form);
+      await registerUser(form);
       navigate("/login", {
         replace: true,
         state: { notice: "Registration successful. Please sign in." }

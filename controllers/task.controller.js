@@ -200,91 +200,107 @@ export const renameTask = asyncHandler (async (req, res) => {
 
 });
 
-export const carryForwardedTask = asyncHandler (async (req, res) => {
+export const carryForwardedTask = asyncHandler(async (req, res) => {
+  const { ids } = req.body;
+  const userId = req.user.userId;
 
-        const { ids } = req.body;
-        const userId = req.user.userId;
+  if (!ids || !ids.length) {
+    throw apiError("Please select tasks to carry forward", 400);
+  }
 
-        const query = {
-            user: userId,
-            date: getToday(),
-            status: { $ne: "done" }
-        };
+  const tasks = await Task.find({
+    user: userId,
+    _id: { $in: ids },
+    status: { $ne: "done" }
+  });
 
-        if (ids && ids.length) {
-            query._id = { $in: ids };
-        }
+  if (!tasks.length) {
+    throw apiError("No task to carry forward", 404);
+  }
 
-        const tasks = await Task.find(query);
+  // tomorrow date
+  const base = new Date();
+  base.setDate(base.getDate() + 1);
 
-        if (!tasks.length) {
-            throw apiError("No task to carry forward", 404);
-        }
+  const tomorrow = new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    base.getDate()
+  ).toISOString().split("T")[0];
 
-        const base = new Date();
-        base.setDate(base.getDate() + 1);
+  const tomorrowsTasks = await Task.find({
+    user: userId,
+    date: tomorrow
+  });
 
-        const tomorrow = new Date(
-            base.getFullYear(),
-            base.getMonth(),
-            base.getDate()
-        ).toISOString().split("T")[0];
+  const primaryTomorrow = tomorrowsTasks.find(t => t.type === "primary") || null;
+  const secondaryTomorrow = tomorrowsTasks.filter(t => t.type === "secondary");
 
-        const tomorrowsTasks = await Task.find({
-            user: userId,
-            date: tomorrow
-        });
+  // 🔥 NEW: detect if selected includes primary
+  const selectedPrimary = tasks.find(t => t.type === "primary") || null;
 
-        const primaryTomorrow = tomorrowsTasks.find(t => t.type === "primary") || null;
-        const secondaryTomorrow = tomorrowsTasks.filter(t => t.type === "secondary");
+  // 🔥 RULE 1: primary conflict
+  if (selectedPrimary && primaryTomorrow) {
+    throw apiError(
+      "Cannot carry forward primary task because today already has one",
+      400
+    );
+  }
 
-        const primaryToday = tasks.find(t => t.type === "primary") || null;
+  // 🔥 RULE 2: ensure at least one primary exists
+  if (!primaryTomorrow && !selectedPrimary) {
+    throw apiError("No primary task available for today", 400);
+  }
 
-        if (!primaryTomorrow && !primaryToday) {
-            throw apiError("No primary task available for tomorrow", 400);
-        }
+  const secondaryLimit =
+    primaryTomorrow && primaryTomorrow.status === "done" ? 5 : 2;
 
-        const secondaryLimit = primaryTomorrow && primaryTomorrow.status === "done" ? 5 : 2;
+  let newTasks = [];
 
-        let newTasks = [];
+  for (let t of tasks) {
+    // PRIMARY
+    if (t.type === "primary") {
+      if (primaryTomorrow || newTasks.some(nt => nt.type === "primary")) {
+        continue; // already handled above
+      }
+    }
 
-        for (let t of tasks) {
+    // SECONDARY
+    if (t.type === "secondary") {
+      const totalSecondary =
+        secondaryTomorrow.length +
+        newTasks.filter(nt => nt.type === "secondary").length;
 
-            // PRIMARY
-            if (t.type === "primary") {
-                if (primaryTomorrow || newTasks.some(nt => nt.type === "primary")) {
-                    continue;
-                }
-            }
+      if (totalSecondary >= secondaryLimit) {
+        continue;
+      }
+    }
 
-            // SECONDARY
-            if (t.type === "secondary") {
-                const totalSecondary =
-                    secondaryTomorrow.length +
-                    newTasks.filter(nt => nt.type === "secondary").length;
+    newTasks.push({
+      title: t.title,
+      status: "todo",
+      type: t.type,
+      date: tomorrow,
+      user: userId,
+      estimatedTime: t.estimatedTime
+    });
+  }
 
-                if (totalSecondary >= secondaryLimit) {
-                    continue;
-                }
-            }
+  // 🔥 CRITICAL FIX (your main bug)
+  if (newTasks.length === 0) {
+    throw apiError(
+      "No tasks could be carried forward due to restrictions",
+      400
+    );
+  }
 
-            newTasks.push({
-                title: t.title,
-                status: "todo",
-                type: t.type,
-                date: tomorrow,
-                user: userId,
-                estimatedTime: t.estimatedTime
-            });
-        }
+  const createdTasks = await Task.insertMany(newTasks);
 
-        const createdTasks = await Task.insertMany(newTasks);
-
-        return res.status(201).json({
-            message: "Tasks carried forward successfully",
-            count: createdTasks.length,
-            tasks: createdTasks
-        });
+  return res.status(201).json({
+    message: "Tasks carried forward successfully",
+    count: createdTasks.length,
+    tasks: createdTasks
+  });
 });
 
 export const deleteTask = asyncHandler (async (req, res) => {
@@ -311,4 +327,24 @@ export const deleteTask = asyncHandler (async (req, res) => {
             message: "Task deleted successfully"
         });
    
-})
+});
+
+export const getTaskHistory = asyncHandler(async (req, res) => {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const dateStr = new Date(
+        sevenDaysAgo.getFullYear(),
+        sevenDaysAgo.getMonth(),
+        sevenDaysAgo.getDate()
+    ).toISOString().split("T")[0];
+
+  const userId = req.user.userId;
+
+  const tasks = await Task.find({
+    user: userId,
+    date: { $gte: dateStr, $lt: getToday() }
+  }).sort({ date: -1 });
+
+  return res.status(200).json(tasks);
+});

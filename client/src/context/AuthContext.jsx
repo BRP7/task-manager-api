@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import api, { TOKEN_KEY } from "../api/client";
+import { fetchProfile } from "../api/auth";
+import { clearAuthTokens, setAuthTokens, TOKEN_KEY } from "../api/client";
 
 const AuthContext = createContext(null);
 
@@ -24,14 +25,14 @@ export function AuthProvider({ children }) {
       }
 
       try {
-        const response = await api.get("/users/profile");
+        const response = await fetchProfile();
 
         if (isMounted) {
           setToken(storedToken);
           setUser(response.data);
         }
       } catch (error) {
-        localStorage.removeItem(TOKEN_KEY);
+        clearAuthTokens();
 
         if (isMounted) {
           setToken(null);
@@ -51,14 +52,17 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signIn = ({ token: nextToken, user: nextUser }) => {
-    localStorage.setItem(TOKEN_KEY, nextToken);
+  const signIn = ({ refreshToken, token: nextToken, user: nextUser }) => {
+    setAuthTokens({
+      refreshToken,
+      token: nextToken
+    });
     setToken(nextToken);
     setUser(nextUser);
   };
 
   const signOut = () => {
-    localStorage.removeItem(TOKEN_KEY);
+    clearAuthTokens();
     setToken(null);
     setUser(null);
   };

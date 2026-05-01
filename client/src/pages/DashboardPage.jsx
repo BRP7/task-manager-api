@@ -1,9 +1,23 @@
 import { useEffect, useState } from "react";
-import api, { getErrorMessage } from "../api/client";
-import CarryForwardModal from "../components/CarryForwardModal";
+import { useNavigate } from "react-router-dom";
+import { logoutUser } from "../api/auth";
+import { getErrorMessage } from "../api/client";
+import {
+  // carryForwardTasks,
+  createTask,
+  deleteTask,
+  fetchTaskHistory,
+  fetchTodayTasks,
+  renameTask,
+  updateTaskStatus
+} from "../api/tasks";
+// import CarryForwardModal from "../components/CarryForwardModal";
+import HistoryModal from "../components/HistoryModal";
 import LoadingScreen from "../components/LoadingScreen";
 import TaskModal from "../components/TaskModal";
 import { useAuth } from "../context/AuthContext";
+import { groupTasksByDate } from "../utils/taskHistory";
+import { formatLoggedTime, formatRunningTime, getTaskWorkedMs } from "../utils/taskTime";
 
 const emptyTasks = {
   primary: null,
@@ -34,7 +48,28 @@ function getSecondaryAction(task) {
   return { label: "Reopen", nextStatus: "todo" };
 }
 
-function SecondaryTaskRow({ isSubmitting, onDelete, onRename, onStatusChange, task }) {
+function TaskTimeSummary({ now, task }) {
+  const isRunning = task.status === "in-progress" && Boolean(task.startedAt);
+
+  return (
+    <div className="task-time-stack">
+      <p className="task-estimate">Estimated {task.estimatedTime} min</p>
+      <p className="task-worked">Worked {formatLoggedTime(task.actualTime)}</p>
+      {isRunning ? (
+        <p className="task-running">Running {formatRunningTime(getTaskWorkedMs(task, now))}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function SecondaryTaskRow({
+  isSubmitting,
+  now,
+  onDelete,
+  onRename,
+  onStatusChange,
+  task
+}) {
   const [isEditing, setIsEditing] = useState(false);
   const [renameValue, setRenameValue] = useState(task.title);
 
@@ -59,7 +94,7 @@ function SecondaryTaskRow({ isSubmitting, onDelete, onRename, onStatusChange, ta
       <div className="secondary-main">
         <div>
           <p className="secondary-title">{task.title}</p>
-          <p className="secondary-meta">{task.estimatedTime} min</p>
+          <TaskTimeSummary now={now} task={task} />
         </div>
         <span className={`status-pill status-${task.status}`}>{getTaskStatusLabel(task.status)}</span>
       </div>
@@ -130,27 +165,37 @@ function SecondaryTaskRow({ isSubmitting, onDelete, onRename, onStatusChange, ta
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const { signOut } = useAuth();
   const [tasks, setTasks] = useState(emptyTasks);
-  const [selectedIds, setSelectedIds] = useState([]);
+  const [historyGroups, setHistoryGroups] = useState([]);
+  // const [selectedIds, setSelectedIds] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [notice, setNotice] = useState(null);
   const [taskModalNotice, setTaskModalNotice] = useState(null);
-  const [carryNotice, setCarryNotice] = useState(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+const [historyNotice, setHistoryNotice] = useState(null);
+const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isCarryModalOpen, setIsCarryModalOpen] = useState(false);
   const [showSecondaryTasks, setShowSecondaryTasks] = useState(false);
   const [isPrimaryRenaming, setIsPrimaryRenaming] = useState(false);
   const [primaryRenameValue, setPrimaryRenameValue] = useState("");
+  const [now, setNow] = useState(() => Date.now());
 
   const handleUnauthorized = () => {
     signOut();
+    navigate("/login", {
+      replace: true,
+      state: { notice: "Your session expired. Please sign in again." }
+    });
   };
 
   const loadTasks = async () => {
     try {
-      const response = await api.get("/tasks");
+      const response = await fetchTodayTasks();
       const nextTasks = {
         primary: response.data.primary,
         secondary: response.data.secondary || []
@@ -158,16 +203,6 @@ export default function DashboardPage() {
 
       setTasks(nextTasks);
       setPrimaryRenameValue(nextTasks.primary?.title || "");
-      setSelectedIds((current) => {
-        const carryableIds = new Set(
-          [nextTasks.primary, ...nextTasks.secondary]
-            .filter(Boolean)
-            .filter((task) => task.status !== "done")
-            .map((task) => task._id)
-        );
-
-        return current.filter((id) => carryableIds.has(id));
-      });
     } catch (error) {
       if (error.response?.status === 401) {
         handleUnauthorized();
@@ -183,9 +218,50 @@ export default function DashboardPage() {
     }
   };
 
+const loadTaskHistory = async () => {
+  setIsHistoryLoading(true);
+
+  try {
+    const response = await fetchTaskHistory();
+    const groupedTasks = groupTasksByDate(response.data || []);
+    setHistoryGroups(groupedTasks);
+  } catch (error) {
+    if (error.response?.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+
+    setCarryNotice({
+      type: "error",
+      text: getErrorMessage(error)
+    });
+  } finally {
+    setIsHistoryLoading(false);
+  }
+};
+
   useEffect(() => {
     loadTasks();
   }, []);
+
+  const hasRunningTask = [tasks.primary, ...tasks.secondary].some(
+    (task) => task?.status === "in-progress" && task.startedAt
+  );
+
+  useEffect(() => {
+    if (!hasRunningTask) {
+      return undefined;
+    }
+
+    setNow(Date.now());
+    const intervalId = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [hasRunningTask]);
 
   const runMutation = async ({ onSuccess, request, successMessage }) => {
     setIsSubmitting(true);
@@ -228,14 +304,13 @@ export default function DashboardPage() {
     setTaskModalNotice(null);
 
     try {
-      const response = await api.post("/tasks", payload);
+      const response = await createTask(payload);
 
       setNotice({
         type: "success",
         text: response.data?.message || "Task created successfully"
       });
       setIsTaskModalOpen(false);
-      setTaskModalNotice(null);
       await loadTasks();
       return true;
     } catch (error) {
@@ -256,50 +331,39 @@ export default function DashboardPage() {
 
   const handleStatusChange = (taskId, status) =>
     runMutation({
-      request: () => api.patch(`/tasks/${taskId}/status`, { status }),
+      request: () => updateTaskStatus(taskId, status),
       successMessage: "Task status updated"
     });
 
   const handleRenameTask = (taskId, renameValue) =>
     runMutation({
-      request: () => api.patch(`/tasks/${taskId}/rename`, { rename: renameValue.trim() }),
+      request: () => renameTask(taskId, renameValue.trim()),
       successMessage: "Task renamed successfully"
     });
 
   const handleDeleteTask = (taskId) =>
     runMutation({
-      request: () => api.delete(`/tasks/${taskId}`),
+      request: () => deleteTask(taskId),
       successMessage: "Task deleted successfully"
     });
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
 
-  const handleCarryForward = async ({ ids, successMessage }) => {
-    setIsSubmitting(true);
-    setCarryNotice(null);
+    let logoutNotice = "Logged out successfully.";
 
     try {
-      const response = await api.post("/tasks/carry-forward", ids ? { ids } : {});
-
-      setNotice({
-        type: "success",
-        text: response.data?.message || successMessage
-      });
-      setCarryNotice(null);
-      setSelectedIds([]);
-      setIsCarryModalOpen(false);
-      return true;
+      const response = await logoutUser();
+      logoutNotice = response.data?.message || logoutNotice;
     } catch (error) {
-      if (error.response?.status === 401) {
-        handleUnauthorized();
-        return false;
+      if (error.response?.status !== 401) {
+        logoutNotice = `Signed out locally. ${getErrorMessage(error)}`;
       }
-
-      setCarryNotice({
-        type: "error",
-        text: getErrorMessage(error)
-      });
-      return false;
     } finally {
-      setIsSubmitting(false);
+      signOut();
+      navigate("/login", {
+        replace: true,
+        state: { notice: logoutNotice }
+      });
     }
   };
 
@@ -309,17 +373,11 @@ export default function DashboardPage() {
     setIsTaskModalOpen(true);
   };
 
-  const openCarryModal = () => {
+  const openHistoryModal = () => {
     setNotice(null);
-    setCarryNotice(null);
-    setSelectedIds([]);
-    setIsCarryModalOpen(true);
-  };
-
-  const toggleSelectedTask = (taskId) => {
-    setSelectedIds((current) =>
-      current.includes(taskId) ? current.filter((id) => id !== taskId) : [...current, taskId]
-    );
+    setHistoryNotice(null);
+    setIsHistoryModalOpen(true);
+    loadTaskHistory();
   };
 
   const submitPrimaryRename = async (event) => {
@@ -342,9 +400,6 @@ export default function DashboardPage() {
 
   const primaryTask = tasks.primary;
   const unfinishedSecondaryCount = tasks.secondary.filter((task) => task.status !== "done").length;
-  const carryableTasks = [tasks.primary, ...tasks.secondary].filter(
-    (task) => task && task.status !== "done"
-  );
 
   let primaryActionLabel = null;
   let primaryActionStatus = null;
@@ -368,19 +423,29 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-actions">
-            <button className="ghost-button toolbar-action" onClick={openTaskModal} type="button">
+            <button
+              className="ghost-button toolbar-action"
+              disabled={isSubmitting || isLoggingOut}
+              onClick={openTaskModal}
+              type="button"
+            >
               + Add Task
             </button>
             <button
               className="ghost-button toolbar-action"
-              disabled={carryableTasks.length === 0}
-              onClick={openCarryModal}
+              disabled={isSubmitting || isLoggingOut}
+              onClick={openHistoryModal}
               type="button"
             >
-              Carry Forward
+              History
             </button>
-            <button className="inline-button toolbar-logout" onClick={signOut} type="button">
-              Logout
+            <button
+              className="inline-button toolbar-logout"
+              disabled={isLoggingOut}
+              onClick={handleLogout}
+              type="button"
+            >
+              {isLoggingOut ? "Logging out..." : "Logout"}
             </button>
           </div>
         </header>
@@ -392,13 +457,13 @@ export default function DashboardPage() {
         ) : null}
 
         <section className="panel primary-focus-card">
-          <p className="eyebrow">Main Task</p>
+          <p className="eyebrow">Today's Primary Task</p>
 
           {primaryTask ? (
             <>
               <h3 className="primary-title">{primaryTask.title}</h3>
-              <p className="primary-time">{primaryTask.estimatedTime} min</p>
               <p className="primary-status-line">Status: {getTaskStatusLabel(primaryTask.status)}</p>
+              <TaskTimeSummary now={now} task={primaryTask} />
 
               {isPrimaryRenaming ? (
                 <form className="compact-rename" onSubmit={submitPrimaryRename}>
@@ -470,8 +535,8 @@ export default function DashboardPage() {
             </>
           ) : (
             <div className="empty-primary">
-              <h3>No main task yet</h3>
-              <p>Start by adding the one task that should guide the rest of the day.</p>
+              <h3>No primary task for today</h3>
+              <p>Create one focused task to anchor the rest of the day.</p>
               <button className="primary-button" onClick={openTaskModal} type="button">
                 + Add Task
               </button>
@@ -485,7 +550,7 @@ export default function DashboardPage() {
             onClick={() => setShowSecondaryTasks((current) => !current)}
             type="button"
           >
-            <span>Secondary Tasks ({tasks.secondary.length})</span>
+            <span>Today's Secondary Tasks ({tasks.secondary.length})</span>
             <span aria-hidden="true">{showSecondaryTasks ? "^" : "v"}</span>
           </button>
 
@@ -494,8 +559,9 @@ export default function DashboardPage() {
               <ul className="secondary-list">
                 {tasks.secondary.map((task) => (
                   <SecondaryTaskRow
-                    key={task._id}
                     isSubmitting={isSubmitting}
+                    key={task._id}
+                    now={now}
                     onDelete={handleDeleteTask}
                     onRename={handleRenameTask}
                     onStatusChange={handleStatusChange}
@@ -504,15 +570,15 @@ export default function DashboardPage() {
                 ))}
               </ul>
             ) : (
-              <p className="muted-copy">No secondary tasks yet.</p>
+              <p className="muted-copy">No secondary tasks for today.</p>
             )
           ) : (
             <p className="muted-copy">
               {unfinishedSecondaryCount > 0
                 ? `${unfinishedSecondaryCount} unfinished secondary task${
                     unfinishedSecondaryCount === 1 ? "" : "s"
-                  } ready when the main task is handled.`
-                : "Keep the rest hidden until you need it."}
+                  } waiting for attention today.`
+                : "No unfinished secondary tasks for today."}
             </p>
           )}
         </section>
@@ -527,25 +593,27 @@ export default function DashboardPage() {
         onCreateTask={handleCreateTask}
       />
 
-      <CarryForwardModal
+      {/* <CarryForwardModal
         feedback={carryNotice}
+        historyGroups={historyGroups}
+        isLoading={isHistoryLoading}
         isOpen={isCarryModalOpen}
         isSubmitting={isSubmitting}
-        onCarryAll={() =>
-          handleCarryForward({
-            successMessage: "Tasks carried forward successfully"
-          })
-        }
-        onCarrySelected={() =>
-          handleCarryForward({
-            ids: selectedIds,
-            successMessage: "Selected tasks carried forward successfully"
-          })
-        }
         onClose={() => setIsCarryModalOpen(false)}
+        onRetry={loadTaskHistory}
+        onSubmit={handleCarryForward}
         onToggleSelect={toggleSelectedTask}
         selectedIds={selectedIds}
-        tasks={carryableTasks}
+      /> */}
+
+
+      <HistoryModal
+        feedback={historyNotice}
+        historyGroups={historyGroups}
+        isLoading={isHistoryLoading}
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        onRetry={loadTaskHistory}
       />
     </main>
   );

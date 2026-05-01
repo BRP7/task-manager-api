@@ -1,26 +1,36 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { TOKEN_KEY } from "./api/client";
+import { ProtectedRoute, PublicRoute, RootRedirect } from "./components/RouteGuards";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 
 export default function App() {
-  const token = localStorage.getItem(TOKEN_KEY);
-
   return (
     <Routes>
-      <Route path="/" element={<Navigate to={token ? "/dashboard" : "/login"} replace />} />
+      <Route path="/" element={<RootRedirect />} />
       <Route
         path="/login"
-        element={token ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+        element={
+          <PublicRoute>
+            <LoginPage />
+          </PublicRoute>
+        }
       />
       <Route
         path="/register"
-        element={token ? <Navigate to="/dashboard" replace /> : <RegisterPage />}
+        element={
+          <PublicRoute>
+            <RegisterPage />
+          </PublicRoute>
+        }
       />
       <Route
         path="/dashboard"
-        element={token ? <DashboardPage /> : <Navigate to="/login" replace />}
+        element={
+          <ProtectedRoute>
+            <DashboardPage />
+          </ProtectedRoute>
+        }
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

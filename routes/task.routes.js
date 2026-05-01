@@ -1,6 +1,7 @@
 import express from "express";
 import {
     createTask,
+    getTaskHistory,
     getTasks,
     updateTaskStatus,
     renameTask,
@@ -13,6 +14,7 @@ const router = express.Router();
 
 router.post("/", auth, createTask);
 router.get("/", auth, getTasks);
+router.get("/history", auth, getTaskHistory);
 router.patch("/:id/status", auth, updateTaskStatus);
 
 router.patch("/:id/rename", auth, renameTask);

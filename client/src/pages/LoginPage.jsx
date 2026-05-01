@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import api, { getErrorMessage } from "../api/client";
+import { loginUser } from "../api/auth";
+import { getErrorMessage } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 
 export default function LoginPage() {
@@ -14,6 +15,10 @@ export default function LoginPage() {
   const [notice, setNotice] = useState(location.state?.notice || null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    setNotice(location.state?.notice || null);
+  }, [location.state]);
+
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((current) => ({ ...current, [name]: value }));
@@ -25,7 +30,7 @@ export default function LoginPage() {
     setNotice(null);
 
     try {
-      const response = await api.post("/users/login", form);
+      const response = await loginUser(form);
       signIn(response.data);
       navigate("/dashboard", { replace: true });
     } catch (error) {

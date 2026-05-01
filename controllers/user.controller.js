@@ -82,12 +82,20 @@ export const loginUser = asyncHandler(async (req, res) => {
         { expiresIn: process.env.JWT_EXPIRES_IN }
     );
 
+    const refreshToken = jwt.sign(
+        { userId: user._id },
+        process.env.JWT_REFRESH_SECRET,
+        { expiresIn: "7d" }
+    );
+    user.refreshToken = refreshToken;
+    await user.save();
     const { password: _, ...secureUser } = user.toObject();
 
     return res.status(200).json({
         message: "Login successful",
         user: secureUser,
-        token
+        token,
+        refreshToken
     });
 });
 
@@ -99,4 +107,16 @@ export const getProfile = asyncHandler(async (req, res) => {
     }
 
     return res.status(200).json(user);
+});
+
+export const logoutUser = asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+
+  await userModel.findByIdAndUpdate(userId, {
+    refreshToken: null
+  });
+
+  return res.status(200).json({
+    message: "Logged out successfully"
+  });
 });
