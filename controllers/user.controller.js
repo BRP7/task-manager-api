@@ -2,8 +2,8 @@ import bcrypt from "bcrypt";
 import userModel from "../models/user.model.js";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
-import { asyncHandler } from "../utils/asyncHandler.js";
-import { apiError } from "../utils/apiError.js";
+import asyncHandler from "../utils/asyncHandler.js";
+import apiError from "../utils/apiError.js";
 
 export const getUsers = asyncHandler(async (req, res) => {
     const users = await userModel.find().select("-password");

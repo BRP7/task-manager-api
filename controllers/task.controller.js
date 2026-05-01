@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import Task from "../models/task.model.js";
-import { asyncHandler } from "../utils/asyncHandler.js";
-import { apiError } from "../utils/apiError.js"
+import asyncHandler from "../utils/asyncHandler.js";
+import apiError from "../utils/apiError.js"
 
 // safer date (no timezone bugs)
 const getToday = () => {
